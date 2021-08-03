@@ -807,7 +807,6 @@ struct MapVar<'a> {
 
 #[derive(serde_derive::Serialize)]
 struct UserSpec {
-    #[serde(skip_serializing_if = "Clone::clone")]
     group: bool,
     create: CreateUser,
 }
