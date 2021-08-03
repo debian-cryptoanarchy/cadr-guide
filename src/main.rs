@@ -2158,6 +2158,15 @@ fn main() -> MultilineTerminator {
                     evars.entry("lnd-system-@variant".to_owned()).or_insert_with(Default::default).insert("tlscertpath".to_owned(), ExternalVar { store: true, name: Some(tls_cert_config), ignore_empty: false, });
                 }
 
+                if !no_variants {
+                    println!();
+                    println!("Does the service need to know the type of the network (mainnet/regtest)?");
+                    let network_param = readline.readline("Enter the name (key) of the field in configuration file to set network type or leave blank for none: ")?;
+                    if !network_param.is_empty() {
+                        readline.add_history_entry(&network_param);
+                        hvars.insert(network_param, HiddenVar { ty: "string", store: true, ignore_empty: false, val: HiddenVarVal::Template("{variant}".to_owned()), });
+                    }
+                }
             }
 
             println!();
