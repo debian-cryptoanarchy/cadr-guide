@@ -2067,7 +2067,7 @@ fn main() -> MultilineTerminator {
                 };
 
                 if needs_bitcoind_full_access {
-                    if has_variants {
+                    if !no_variants {
                         extra_groups.insert("bitcoin-{variant}".to_owned(), ExtraGroup { create: false, });
                     } else {
                         unimplemented!("variant-less version of bitcoind connection not implemented");
