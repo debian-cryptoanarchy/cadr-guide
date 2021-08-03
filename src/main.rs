@@ -529,6 +529,7 @@ struct ServicePackage {
     executable: String,
     executable_package: String,
     service_type: ServiceType,
+    depends: Vec<String>,
     recommends: Vec<&'static str>,
     config_input: Option<ConfigInput>,
     config: Config,
@@ -566,7 +567,7 @@ impl ServicePackage {
                     home: true,
                 }
             }),
-            depends: &[],
+            depends: &self.depends,
             recommends: &self.recommends,
             databases: Databases {
                 pgsql,
@@ -1864,6 +1865,7 @@ fn main() -> MultilineTerminator {
     if !suggested_service_binaries.is_empty() {
         for (executable, executable_package) in suggested_service_binaries {
             let mut recommends = Vec::new();
+            let mut depends = Vec::new();
             let mut ivars = HashMap::new();
             let mut evars = <HashMap<_, HashMap<_, _>>>::new();
             let mut hvars = HashMap::new();
@@ -2129,18 +2131,27 @@ fn main() -> MultilineTerminator {
                         hvars.insert(host_key, HiddenVar { ty: "string", store: true, ignore_empty: false, val: HiddenVarVal::Constant("127.0.0.1".to_owned()), });
                     }
 
+                    if no_variants {
+                        unimplemented!("variant-less version of lnd connection not implemented");
+                    }
                     match macaroon {
                         LndMacaroon::Admin => {
                             evars.entry("lnd-system-@variant".to_owned()).or_insert_with(Default::default).insert("adminmacaroonpath".to_owned(), ExternalVar { store: true, name: Some(macaroon_config), ignore_empty: false, });
+                            extra_groups.insert("lnd-system-{variant}".to_owned(), ExtraGroup { create: false, });
                         },
                         LndMacaroon::InvoiceAndReadOnly => {
                             hvars.insert(macaroon_config, HiddenVar { ty: "string", store: true, ignore_empty: false, val: HiddenVarVal::Template("/var/lib/lnd-system-{variant}/invoice/invoice+readonly.macaroon".to_owned()), });
+                            extra_groups.insert("lnd-system-{variant}-invoice".to_owned(), ExtraGroup { create: false, });
+                            extra_groups.insert("lnd-system-{variant}-readonly".to_owned(), ExtraGroup { create: false, });
+                            depends.push("lnd-genmacaroon-system-{variant}".to_owned());
                         },
                         LndMacaroon::Invoice => {
                             evars.entry("lnd-system-@variant".to_owned()).or_insert_with(Default::default).insert("invoicemacaroonpath".to_owned(), ExternalVar { store: true, name: Some(macaroon_config), ignore_empty: false, });
+                            extra_groups.insert("lnd-system-{variant}-invoice".to_owned(), ExtraGroup { create: false, });
                         },
                         LndMacaroon::ReadOnly => {
                             evars.entry("lnd-system-@variant".to_owned()).or_insert_with(Default::default).insert("readonlymacaroonpath".to_owned(), ExternalVar { store: true, name: Some(macaroon_config), ignore_empty: false, });
+                            extra_groups.insert("lnd-system-{variant}-readonly".to_owned(), ExtraGroup { create: false, });
                         },
                     }
 
@@ -2313,6 +2324,7 @@ fn main() -> MultilineTerminator {
                 executable,
                 executable_package,
                 service_type,
+                depends,
                 recommends,
                 config,
                 main_conf_file_name,
