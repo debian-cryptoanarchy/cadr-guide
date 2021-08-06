@@ -1241,7 +1241,7 @@ fn main() -> MultilineTerminator {
     println!("It's highly recommended that you verify the source code using GPG.");
     println!("This program can do it automatically for you, just enter the fingerprint of GPG key.");
     println!("Leave the line blank to skip verification - NOT recommended for production!");
-    let fingerprint = readline.readline("Please enter the fingerprint or hit Enter: ")?;
+    let fingerprint = readline.readline("Please enter the PGP fingerprint or hit Enter: ")?;
     readline.add_history_entry(&fingerprint);
     println!();
     let download_and_verify = match (method, fingerprint.is_empty()) {
