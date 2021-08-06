@@ -4,6 +4,7 @@ use std::io;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::collections::{HashMap, HashSet};
+use once_cell::sync::Lazy;
 
 struct ChangelogRecord<'a> {
     package_name: &'a str,
@@ -395,6 +396,8 @@ impl Architecture {
     }
 }
 
+static EMPTY_MAP_VARIANTS: Lazy<MapVariants> = Lazy::new(|| MapVariants::new());
+
 struct SharedPackage {
     name: String,
     summary: String,
@@ -421,7 +424,7 @@ impl SharedPackage {
                 pgsql: None,
                 mysql: None,
             },
-            map_variants: None,
+            map_variants: &EMPTY_MAP_VARIANTS,
             extra_groups: &self.extra_groups,
             config: Default::default(),
         }
@@ -456,7 +459,7 @@ impl ExecutablePackage {
                 pgsql: None,
                 mysql: None,
             },
-            map_variants: None,
+            map_variants: &EMPTY_MAP_VARIANTS,
             extra_groups: &self.extra_groups,
             config: Default::default(),
         }
@@ -536,7 +539,7 @@ struct ServicePackage {
     main_conf_file_name: String,
     database: Option<(DatabaseType, String)>,
     extra_groups: HashMap<String, ExtraGroup>,
-    map_http: Option<MapHttp>,
+    map_variants: MapVariants,
 }
 
 impl ServicePackage {
@@ -549,8 +552,6 @@ impl ServicePackage {
 
         let mut config = HashMap::with_capacity(1);
         config.insert(&*self.main_conf_file_name, &self.config);
-
-        let map_variants = self.map_http.as_ref().map(|map_http| MapVariants { default_http_port: MapVar { mainnet: &map_http.default_mainnet_port, regtest: &map_http.default_regtest_port, }, default_root_path: MapVar { mainnet: &map_http.default_mainnet_root_path, regtest: &map_http.default_regtest_root_path, }, });
 
         Package {
             name: &self.name,
@@ -573,7 +574,7 @@ impl ServicePackage {
                 pgsql,
                 mysql,
             },
-            map_variants,
+            map_variants: &self.map_variants,
             extra_groups: &self.extra_groups,
             config,
         }
@@ -658,6 +659,22 @@ impl DefaultVal {
         match self {
             DefaultVal::Single(val) => val.clone(),
             DefaultVal::PerNetwork(_, _) => name.to_owned(),
+        }
+    }
+}
+
+fn read_default_port(readline: &mut rustyline::Editor<()>, no_variants: bool) -> rustyline::Result<DefaultVal> {
+    if no_variants {
+        Ok(DefaultVal::Single(read_port(readline, "Please enter the default listening port number: ")?))
+    } else {
+        let mainnet_default = read_port(readline, "Please enter the default listening port number for mainnet instance: ")?;
+        loop {
+            let regtest_default = read_port(readline, "Please enter the default listening port number for regtest instance - must be different from mainnet: ")?;
+            if mainnet_default != regtest_default {
+                break Ok(DefaultVal::PerNetwork(mainnet_default, regtest_default));
+            }
+
+            println!("The port numbers must be different for each network!");
         }
     }
 }
@@ -788,22 +805,18 @@ struct Package<'a> {
     extra_groups: &'a HashMap<String, ExtraGroup>,
     #[serde(skip_serializing_if = "Databases::is_none")]
     databases: Databases<'a>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    map_variants: Option<MapVariants<'a>>,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    map_variants: &'a MapVariants,
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     config: HashMap<&'a str, &'a Config>,
 }
 
-#[derive(serde_derive::Serialize)]
-struct MapVariants<'a> {
-    default_http_port: MapVar<'a>,
-    default_root_path: MapVar<'a>,
-}
+type MapVariants = HashMap<String, MapVar>;
 
 #[derive(serde_derive::Serialize)]
-struct MapVar<'a> {
-    mainnet: &'a str,
-    regtest: &'a str,
+struct MapVar {
+    mainnet: String,
+    regtest: String,
 }
 
 #[derive(serde_derive::Serialize)]
@@ -1864,6 +1877,7 @@ fn main() -> MultilineTerminator {
     let mut has_variants = false;
     if !suggested_service_binaries.is_empty() {
         for (executable, executable_package) in suggested_service_binaries {
+            let mut map_variants = HashMap::new();
             let mut recommends = Vec::new();
             let mut depends = Vec::new();
             let mut ivars = HashMap::new();
@@ -2232,7 +2246,7 @@ fn main() -> MultilineTerminator {
             } else {
                 read_yes_no(&mut readline, "Does this service provide a PUBLIC HTTP interface (API) anyway? y for yes, n for no: ")?
             };
-            let http_conf = if provides_http {
+            if provides_http {
                 recommends.push("selfhost (>= 1.0)");
                 recommends.push("selfhost (<< 2.0)");
                 let port = readline.readline("Enter the name (key) of the field in configuration file to set HTTP listen port: ")?;
@@ -2251,19 +2265,7 @@ fn main() -> MultilineTerminator {
                 } else {
                     false
                 };
-                let default_port = if no_variants {
-                    DefaultVal::Single(read_port(&mut readline, "Please enter the default listening port number: ")?)
-                } else {
-                    let mainnet_default = read_port(&mut readline, "Please enter the default listening port number for mainnet instance: ")?;
-                    loop {
-                        let regtest_default = read_port(&mut readline, "Please enter the default listening port number for regtest instance - must be different from mainnet: ")?;
-                        if mainnet_default != regtest_default {
-                            break DefaultVal::PerNetwork(mainnet_default, regtest_default);
-                        }
-
-                        println!("The port numbers must be different for each network!");
-                    }
-                };
+                let default_port = read_default_port(&mut readline, no_variants)?;
                 let default_root_path = if no_variants {
                     DefaultVal::Single(read_root_path(&mut readline, "Please enter the default root path: ")?)
                 } else {
@@ -2294,18 +2296,35 @@ fn main() -> MultilineTerminator {
                 ivars.insert(root_path.clone(), InternalVar { ty: "string", summary: root_path_summary, default: Some(default_root_path.template("{default_root_path}")), priority: "medium", store: true, ignore_empty: false, });
 
                 if let (DefaultVal::PerNetwork(port_mainnet, port_regtest), DefaultVal::PerNetwork(root_path_mainnet, root_path_regtest)) = (default_port, default_root_path) {
-                    Some(MapHttp {
-                        default_mainnet_port: port_mainnet,
-                        default_regtest_port: port_regtest,
-                        default_mainnet_root_path: root_path_mainnet,
-                        default_regtest_root_path: root_path_regtest,
-                    })
-                } else {
-                    None
+                    map_variants.insert("default_http_port".to_owned(), MapVar { mainnet: port_mainnet, regtest: port_regtest, });
+                    map_variants.insert("default_root_path".to_owned(), MapVar { mainnet: root_path_mainnet, regtest: root_path_regtest, });
                 }
-            } else {
-                None
             };
+
+            println!();
+            println!("Does the service listen on additional ports?");
+            loop {
+                let port_param = readline.readline("Enter the name (key) of the field in configuration file to set an additional listening port or leave blank for none: ")?;
+                if port_param.is_empty() {
+                    break;
+                }
+                readline.add_history_entry(&port_param);
+                println!();
+                println!("Please write a short, readable description of the port. A good description should contain");
+                println!("the name of the service and interface provided. Example: Electrs Json RPC port to listen on");
+                println!();
+                let summary = readline.readline("Enter summary describing this port: ")?;
+                readline.add_history_entry(&summary);
+                let default_port = read_default_port(&mut readline, no_variants)?;
+                let mut mapping_name = format!("{{default_{}}}", port_param);
+                ivars.insert(port_param, InternalVar { ty: "bind_port", summary, default: Some(default_port.template(&mapping_name)), priority: "low", store: true, ignore_empty: false, });
+                mapping_name.pop();
+                mapping_name.remove(0);
+                if let DefaultVal::PerNetwork(mainnet, regtest) = default_port {
+                    map_variants.insert(mapping_name, MapVar { mainnet, regtest, });
+                }
+                println!();
+            }
 
             let executable = if executable.starts_with("/usr/bin/") {
                 executable
@@ -2340,7 +2359,7 @@ fn main() -> MultilineTerminator {
                 config_input,
                 database,
                 extra_groups,
-                map_http: http_conf,
+                map_variants,
             };
             services.push(service);
         }
