@@ -12,8 +12,8 @@ focusing at one topic at a time.
 The result is prepared skeleton for your package with important details filled in.
 
 Note that this is WIP, so many things are unimplemented and details in the files are missing.
-However, it should do ~80% of work.
-Manually fixing the rest should be easy and quick.
+However, it should do ~80% of the work.
+Manually fixing the rest should be quick and easy.
 If you're stuck feel free to create a PR from the state of your repository and I will try to help you out.
 
 ## Usage
