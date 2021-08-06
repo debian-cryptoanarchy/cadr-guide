@@ -35,10 +35,10 @@ To avoid disappointment you should make sure these things are true before you be
 
 ### Compiling the guide
 
-You need Rust to compile this.
-Just `apt install cargo`.
-
-To compile and install the guide just run `cargo install --locked --path .` inside this project directory (notice the dot at the end).
+0. You need Rust to compile this. Just `apt install cargo`.
+1. `git clone https://github.com/debian-cryptoanarchy/cagr-guide`
+2. `cd cagr-guide`
+3. `cargo install --locked --path .` (notice the dot at the end).
 
 ### Using the guide
 
