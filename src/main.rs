@@ -178,6 +178,25 @@ fn read_unique_package_name(readline: &mut rustyline::Editor<()>, our_packages: 
     }
 }
 
+fn read_summary_with_suggestion(readline: &mut rustyline::Editor<()>, suggestion: Option<String>) -> String {
+    let summary = match suggestion {
+        Some(suggestion) => {
+            println!();
+            println!("You need to write a short description of the package. Black magic suggests you this description:");
+            println!("{}", suggestion);
+            println!();
+            readline.readline("Please write an alternative short (one-line) description of the package or leave empty to accept suggestion: ").unwrap()
+        },
+        None =>  {
+            readline.readline("Please write a short (one-line) description of the package: ").unwrap()
+        }
+    };
+    if !summary.is_empty() {
+        readline.add_history_entry(&summary);
+    }
+    summary
+}
+
 #[derive(Eq, PartialEq)]
 enum DownloadMethod {
     Git,
@@ -254,6 +273,8 @@ struct ExecutableSuggestion {
     is_path_relative: bool,
     is_arch_dependent: bool,
     skip_debug_symbols: bool,
+    summary: Option<String>,
+    long_doc: Option<String>,
     csproj: Option<String>,
 }
 
@@ -263,12 +284,15 @@ fn cargo_suggest_executables(source_dir: &Path) -> Vec<ExecutableSuggestion> {
     match (manifest.package, manifest.workspace) {
         (Some(package), None) => {
             let package_name = package.name;
+            let description = package.description;
             manifest.bin
                 .into_iter()
                 .map(|bin| ExecutableSuggestion {
                     path: bin.name.unwrap_or_else(|| package_name.to_owned()),
                     is_path_relative: false,
                     is_arch_dependent: true,
+                    summary: description.clone(),
+                    long_doc: None,
                     skip_debug_symbols: false,
                     csproj: None,
                 })
@@ -356,12 +380,33 @@ fn dotnet_suggest_executables(source_dir: &Path) -> Vec<ExecutableSuggestion> {
                             }
                         });
 
+                        let summary = csproj.items.iter().find_map(|item| {
+                            match item {
+                                Item::PropertyGroup(PropertyGroup { title, .. }) => title.as_ref(),
+                                _ => None,
+                            }
+                        }).map(Clone::clone);
+
+                        let long_doc = csproj.items.iter().find_map(|item| {
+                            match item {
+                                Item::PropertyGroup(PropertyGroup { description, .. }) => description.as_ref(),
+                                _ => None,
+                            }
+                        }).map(Clone::clone);
+
+                        let (summary, long_doc) = match (summary, long_doc) {
+                            (None, Some(description)) => (Some(description), None),
+                            tuple => tuple,
+                        };
+
                         if is_exe {
                             let suggestion = ExecutableSuggestion {
                                 path: bin_name.to_owned(),
                                 is_path_relative: true,
                                 is_arch_dependent: true,
                                 skip_debug_symbols: true,
+                                summary,
+                                long_doc,
                                 csproj: Some(csproj_rel_path),
                             };
 
@@ -452,6 +497,8 @@ fn search_built_executables(source_dir: &Path) -> Vec<ExecutableSuggestion> {
                         is_path_relative: true,
                         is_arch_dependent: true,
                         skip_debug_symbols: !has_debug_info(&file_path),
+                        summary: None,
+                        long_doc: None,
                         csproj: None,
                     }
                 } else {
@@ -460,6 +507,8 @@ fn search_built_executables(source_dir: &Path) -> Vec<ExecutableSuggestion> {
                         is_path_relative: true,
                         is_arch_dependent: false,
                         skip_debug_symbols: false,
+                        summary: None,
+                        long_doc: None,
                         csproj: None,
                     }
                 };
@@ -1796,8 +1845,6 @@ fn main() -> MultilineTerminator {
         let mut links = Vec::new();
 
         let package_name = read_unique_package_name(&mut readline, &mut our_packages);
-        let summary = readline.readline("Please write a short (one-line) description of the package: ")?;
-        readline.add_history_entry(&summary);
         println!();
         let suggested_executables_was_empty = suggested_executables.is_empty();
 
@@ -1810,6 +1857,7 @@ fn main() -> MultilineTerminator {
 
         let mut files = Vec::new();
         let mut exec_count = 0usize;
+        let mut summary_suggestion = None;
         while !suggested_executables.is_empty() {
             println!();
             for (i, ExecutableSuggestion { path, .. }) in suggested_executables.iter().enumerate() {
@@ -1834,6 +1882,9 @@ fn main() -> MultilineTerminator {
             let choice = choice - 1;
 
             let executable = suggested_executables.remove(choice);
+            if summary_suggestion.is_none() {
+                summary_suggestion = executable.summary;
+            }
             was_arch_dep |= executable.is_arch_dependent;
             skip_debug_symbols |= executable.skip_debug_symbols;
 
@@ -1958,6 +2009,8 @@ fn main() -> MultilineTerminator {
                 Architecture::Any
             },
         };
+
+        let summary = read_summary_with_suggestion(&mut readline, summary_suggestion);
 
         println!();
 
