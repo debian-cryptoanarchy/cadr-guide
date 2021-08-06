@@ -233,6 +233,7 @@ impl BuildSystem {
         match self {
             BuildSystem::Cargo => cargo_suggest_executables(source_dir),
             BuildSystem::None => search_built_executables(source_dir),
+            BuildSystem::DotNet => dotnet_suggest_executables(source_dir),
             _ => Vec::new(),
         }
     }
@@ -253,6 +254,7 @@ struct ExecutableSuggestion {
     is_path_relative: bool,
     is_arch_dependent: bool,
     skip_debug_symbols: bool,
+    csproj: Option<String>,
 }
 
 fn cargo_suggest_executables(source_dir: &Path) -> Vec<ExecutableSuggestion> {
@@ -268,6 +270,7 @@ fn cargo_suggest_executables(source_dir: &Path) -> Vec<ExecutableSuggestion> {
                     is_path_relative: false,
                     is_arch_dependent: true,
                     skip_debug_symbols: false,
+                    csproj: None,
                 })
                 .collect()
         },
@@ -280,6 +283,97 @@ fn cargo_suggest_executables(source_dir: &Path) -> Vec<ExecutableSuggestion> {
         (Some(_), Some(_)) => panic!("WTF, Cargo.toml contains both package and workspace"),
         (None, None) => panic!("WTF, Cargo.toml contains neither package nor workspace"),
     }
+}
+
+fn deserialize_ignore_any<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<(), D::Error> {
+    use serde::Deserialize;
+
+    serde::de::IgnoredAny::deserialize(deserializer)?;
+    Ok(())
+}
+
+fn dotnet_suggest_executables(source_dir: &Path) -> Vec<ExecutableSuggestion> {
+    use io::BufRead;
+
+    #[derive(serde_derive::Deserialize)]
+    struct PropertyGroup {
+        #[serde(rename = "OutputType", default)]
+        output_type: Option<String>,
+        #[serde(rename = "Description", default)]
+        description: Option<String>,
+        #[serde(rename = "AssemblyTitle", default)]
+        title: Option<String>,
+    }
+
+    #[derive(serde_derive::Deserialize)]
+    enum Item {
+        PropertyGroup(PropertyGroup),
+        #[serde(other, deserialize_with = "deserialize_ignore_any")]
+        Other,
+    }
+
+    #[derive(serde_derive::Deserialize)]
+    struct CSProj {
+        #[serde(rename = "$value")]
+        items: Vec<Item>,
+    }
+
+    let mut executables = Vec::new();
+    for file in std::fs::read_dir(&source_dir).expect("failed to list source directory") {
+        let file = file.expect("Failed to get file in source directory");
+        let path = file.path();
+        if path.extension() == Some("sln".as_ref()) {
+            let sln = std::fs::File::open(&path).expect("Failed to open solution file");
+            let sln = io::BufReader::new(sln);
+            for line in sln.lines() {
+                let line = line.expect("failed to read sln");
+                if line.starts_with("Project(") {
+                    let eqpos = line.find('=').expect("Project entry in sln missing `=`");
+                    let mut parts = line[(eqpos + 1)..].split(',');
+                    let bin_name = parts.next().expect("Missing name");
+                    let bin_name = &bin_name.trim()[1..];
+                    let bin_name = &bin_name[..(bin_name.len() - 1)];
+                    let path_with_end_quote = &parts.next().expect("missing path").trim()[1..];
+                    let path = &path_with_end_quote[..(path_with_end_quote.len() - 1)];
+                    if path.ends_with(".csproj") {
+                        let csproj_rel_path = path.replace('\\', "/");
+                        let path = source_dir.join(&csproj_rel_path);
+                        let csproj_str = std::fs::read_to_string(&path)
+                            .unwrap_or_else(|error| panic!("failed to read {}: {}", path.display(), error));
+
+                        let csproj_trimmed = if csproj_str.starts_with("\u{feff}") {
+                            &csproj_str[3..]
+                        } else {
+                            &csproj_str
+                        }.trim();
+
+                        let csproj = serde_xml_rs::from_reader::<_, CSProj>(csproj_trimmed.as_bytes())
+                            .expect("failed to load csproj");
+                        let is_exe = csproj.items.iter().any(|group| {
+                            match group {
+                                Item::PropertyGroup(PropertyGroup { output_type: Some(output_type), .. }) => output_type == "Exe",
+                                _ => false,
+                            }
+                        });
+
+                        if is_exe {
+                            let suggestion = ExecutableSuggestion {
+                                path: bin_name.to_owned(),
+                                is_path_relative: true,
+                                is_arch_dependent: true,
+                                skip_debug_symbols: true,
+                                csproj: Some(csproj_rel_path),
+                            };
+
+                            executables.push(suggestion);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    executables
 }
 
 fn is_executable_elf(elf: &Path) -> bool {
@@ -358,6 +452,7 @@ fn search_built_executables(source_dir: &Path) -> Vec<ExecutableSuggestion> {
                         is_path_relative: true,
                         is_arch_dependent: true,
                         skip_debug_symbols: !has_debug_info(&file_path),
+                        csproj: None,
                     }
                 } else {
                     ExecutableSuggestion {
@@ -365,6 +460,7 @@ fn search_built_executables(source_dir: &Path) -> Vec<ExecutableSuggestion> {
                         is_path_relative: true,
                         is_arch_dependent: false,
                         skip_debug_symbols: false,
+                        csproj: None,
                     }
                 };
 
@@ -413,6 +509,7 @@ impl SharedPackage {
             summary: &self.summary,
             architecture: Some(self.architecture.debian_id()),
             add_files: &self.files,
+            add_links: &[],
             bin_package: None,
             binary: None,
             conf_param: None,
@@ -437,6 +534,7 @@ struct ExecutablePackage {
     architecture: Architecture,
     dependencies: Vec<String>,
     files: Vec<String>,
+    links: Vec<String>,
     recommends: Vec<&'static str>,
     extra_groups: HashMap<String, ExtraGroup>,
 }
@@ -448,6 +546,7 @@ impl ExecutablePackage {
             summary: &self.summary,
             architecture: Some(self.architecture.debian_id()),
             add_files: &self.files,
+            add_links: &self.links,
             bin_package: None,
             binary: None,
             conf_param: None,
@@ -558,6 +657,7 @@ impl ServicePackage {
             summary: &self.summary,
             architecture: None,
             add_files: &[],
+            add_links: &[],
             bin_package: Some(&self.executable_package),
             binary: Some(&self.executable),
             conf_param: self.config_input.as_ref().and_then(|conf| conf.as_file_param()),
@@ -743,6 +843,10 @@ struct BuildRules<'a> {
     unpack: Option<Unpack<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     shasums: Option<ShaSums<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dotnet_csproj: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dotnet_build_name: Option<String>,
 }
 
 #[derive(serde_derive::Serialize)]
@@ -795,6 +899,8 @@ struct Package<'a> {
     recommends: &'a [&'a str],
     #[serde(skip_serializing_if = "<[String]>::is_empty")]
     add_files: &'a [String],
+    #[serde(skip_serializing_if = "<[String]>::is_empty")]
+    add_links: &'a [String],
     #[serde(skip_serializing_if = "Option::is_none")]
     conf_param: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1606,6 +1712,8 @@ fn main() -> MultilineTerminator {
     let mut executable_packages = Vec::new();
     let mut services = Vec::new();
     let mut our_packages = HashSet::new();
+    let mut dotnet_csproj = None;
+    let mut dotnet_build_name = None;
 
     loop {
         println!();
@@ -1685,6 +1793,8 @@ fn main() -> MultilineTerminator {
             continue;
         }
 
+        let mut links = Vec::new();
+
         let package_name = read_unique_package_name(&mut readline, &mut our_packages);
         let summary = readline.readline("Please write a short (one-line) description of the package: ")?;
         readline.add_history_entry(&summary);
@@ -1727,25 +1837,59 @@ fn main() -> MultilineTerminator {
             was_arch_dep |= executable.is_arch_dependent;
             skip_debug_symbols |= executable.skip_debug_symbols;
 
+            let path = match executable.csproj {
+                Some(csproj) => {
+                    assert!(dotnet_csproj.is_none(), "Oops, we don't support multiple dotnet executables yet");
+
+                    let dest_path = if executable.path.contains(|c| c >= 'A' && c <= 'Z') {
+                        let lower = executable.path.to_ascii_lowercase();
+
+                        println!();
+                        println!("The executable has non-standard name - it contains upper case letters.");
+                        println!("Executables usually contain lower-case letters and dashes only");
+                        println!("I suggest to rename it to {}", lower);
+                        println!();
+                        let new_name = readline.readline("Enter the new name for executable or leave empty to accept suggestion: ")?;
+                        if new_name.is_empty() {
+                            lower
+                        } else {
+                            new_name
+                        }
+                    } else {
+                        executable.path.clone()
+                    };
+
+                    links.push(format!("/usr/lib/{}/{} /usr/bin/{}", package_name, executable.path, dest_path));
+                    dotnet_csproj = Some(csproj);
+                    dotnet_build_name = Some(package_name.clone());
+                    files.push(format!("/usr/lib/{}", package_name));
+                    dest_path
+                },
+                None => {
+                    let filespec = if executable.is_path_relative {
+                        format!("{} /usr/bin", executable.path)
+                    } else {
+                        format!("/usr/bin/{}", executable.path)
+                    };
+
+                    files.push(filespec);
+
+                    executable.path
+                },
+            };
+
             println!();
-            println!("Does the executable ({}) provide a long-running background service?", executable.path);
+            println!("Does the executable ({}) provide a long-running background service?", path);
             println!("An example of such service is bitcoind - it runs in the background all the time.");
             let service = read_yes_no(&mut readline, "Is this executable a service? y for yes, n for no: ")?;
 
             if service {
-                suggested_service_binaries.push((executable.path.clone(), package_name.clone()));
+                suggested_service_binaries.push((path.clone(), package_name.clone()));
                 println!();
                 println!("OK, we will get back to configuring specifics of a service later.");
                 println!("Let's finish this step first.");
             }
 
-            let executable = if executable.is_path_relative {
-                format!("{} /usr/bin", executable.path)
-            } else {
-                format!("/usr/bin/{}", executable.path)
-            };
-
-            files.push(executable);
             exec_count += 1;
         }
 
@@ -1867,6 +2011,7 @@ fn main() -> MultilineTerminator {
             summary,
             architecture,
             files,
+            links,
             dependencies,
             // TODO: fill
             recommends: Default::default(),
@@ -2427,6 +2572,8 @@ fn main() -> MultilineTerminator {
         build_system: build_system.identifier(),
         unpack,
         shasums,
+        dotnet_csproj,
+        dotnet_build_name,
     };
 
     let build_rules_path = format!("build_rules/{}.yaml", source_package_name);
@@ -2469,11 +2616,19 @@ fn main() -> MultilineTerminator {
         &[]
     };
 
+    let build_depends: &[_] = match build_system {
+        BuildSystem::Cargo => &["cargo:native (>= 0.34.0)", "gcc-arm-linux-gnueabihf [armhf]", "gcc-aarch64-linux-gnu [arm64]", "libstd-rust-dev"],
+        BuildSystem::Python3 => &["python3-all", "dh-python", "python3-setuptools"],
+        BuildSystem::Npm => &["npm"],
+        BuildSystem::None => &[],
+        BuildSystem::DotNet => &["dotnet-sdk-3.1:native (<< 3.1.300-1) | dotnet-sdk-3.1:native (>= 3.1.301-1)"]
+    };
+
     let source_spec = SourcePackage {
         name: &source_package_name,
         section: "net",
         variants,
-        build_depends: &[],
+        build_depends,
         packages: &packages,
         skip_debug_symbols,
     };
