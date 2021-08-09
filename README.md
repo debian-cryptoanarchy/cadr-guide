@@ -37,8 +37,8 @@ To avoid disappointment you should make sure these things are true before you be
 
 0. You need Rust to compile this. Just `apt install cargo`.
 1. Make sure to set `PATH=$PATH:~/.cargo/bin`.
-2. `git clone https://github.com/debian-cryptoanarchy/cagr-guide`
-3. `cd cagr-guide`
+2. `git clone https://github.com/debian-cryptoanarchy/cadr-guide`
+3. `cd cadr-guide`
 4. `cargo install --locked --path .` (notice the dot at the end).
 
 ### Using the guide
