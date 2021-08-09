@@ -75,6 +75,7 @@ pub fn suggest_executables(source_dir: &Path) -> Vec<ExecutableSuggestion> {
                     ExecutableSuggestion {
                         path,
                         is_path_relative: true,
+                        is_in_destdir: false,
                         is_arch_dependent: true,
                         skip_debug_symbols: !has_debug_info(&file_path),
                         summary: None,
@@ -85,6 +86,7 @@ pub fn suggest_executables(source_dir: &Path) -> Vec<ExecutableSuggestion> {
                     ExecutableSuggestion {
                         path,
                         is_path_relative: true,
+                        is_in_destdir: false,
                         is_arch_dependent: false,
                         skip_debug_symbols: false,
                         summary: None,

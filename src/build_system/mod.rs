@@ -67,6 +67,7 @@ impl BuildSystem {
 pub struct ExecutableSuggestion {
     pub path: String,
     pub is_path_relative: bool,
+    pub is_in_destdir: bool,
     pub is_arch_dependent: bool,
     pub skip_debug_symbols: bool,
     pub summary: Option<String>,

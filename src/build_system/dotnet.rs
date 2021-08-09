@@ -96,6 +96,7 @@ pub fn suggest_executables(source_dir: &Path) -> Vec<ExecutableSuggestion> {
                             let suggestion = ExecutableSuggestion {
                                 path: bin_name.to_owned(),
                                 is_path_relative: true,
+                                is_in_destdir: true,
                                 is_arch_dependent: true,
                                 skip_debug_symbols: true,
                                 summary,

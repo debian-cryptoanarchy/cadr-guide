@@ -13,6 +13,7 @@ pub fn suggest_executables(source_dir: &Path) -> Vec<ExecutableSuggestion> {
                 .map(|bin| ExecutableSuggestion {
                     path: bin.name.unwrap_or_else(|| package_name.to_owned()),
                     is_path_relative: false,
+                    is_in_destdir: true,
                     is_arch_dependent: true,
                     summary: description.clone(),
                     long_doc: None,
