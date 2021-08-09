@@ -1430,6 +1430,9 @@ fn main() -> MultilineTerminator {
     Once you figured it out, let's add shared packages - libraries or data. Enter \"a\" (without
     quotes) to add a new shared package. Enter \"c\" to finish adding shared packages and proceed to
     next step.
+
+    If you're unsure whether making a shared package is the right thing to do, feel free to skip this
+    (continue) for now and ask about it when doing a PR. We will figure it out together.
     ");
 
     let mut shared_packages = Vec::new();
