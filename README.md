@@ -22,7 +22,8 @@ If you're stuck feel free to create a PR from the state of your repository and I
 
 To avoid disappointment you should make sure these things are true before you begin:
 
-- [ ] You have Debian 10 system available (VM is OK)
+- [ ] You have Debian 10 Buster system available (VM is OK)
+- [ ] Proper newer version of Rust is required. 1.48 in Bullseye will work, default in Buster need to be [updated](https://rustup.rs/).
 - [ ] All services of the project support configuration via file (one of: plain key=value, toml, yaml, json) or environment variables.
 - [ ] Path to config file is NOT hard-coded and can be specified on command line.
 - [ ] If the service provides public HTTP API (as a webapp or headless server) root path (prefix to go at the beginning of each path)
