@@ -7,7 +7,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-rustyline = "7.1.0"
+rustyline = "6.3.0"
 random_stuff = "0.1.0"
 thiserror = "1.0.23"
 mktemp = "0.4.1"
